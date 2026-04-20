@@ -1,0 +1,9 @@
+build/
+dist/
+__pycache__/
+*.pyc
+*.webm
+*.mp4
+node_modules/
+.env
+venv/
