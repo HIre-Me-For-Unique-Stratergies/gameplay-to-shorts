@@ -68,9 +68,7 @@ class Creator:
 
         ffmpeg = utils.ffmpeg_tool("ffmpeg")
         if not ffmpeg:
-            raise RuntimeError("ffmpeg was not found on PATH.")
-        if not utils.ffmpeg_tool("ffprobe"):
-            raise RuntimeError("ffprobe was not found on PATH.")
+            raise RuntimeError("ffmpeg was not found. Install FFmpeg or install imageio-ffmpeg.")
 
         try:
             video_paths = self._validate_video_sources(job.video_paths)

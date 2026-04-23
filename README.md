@@ -6,7 +6,7 @@ source, picks a built-in song, and places random built-in SFX hits across the
 timeline. Output is vertical (1080x1920 by default).
 
 ## Features
-- Five-slot gameplay source manager with add, replace, and remove controls
+- Five thumbnail source blocks with add, replace, and remove controls
 - Fast FFmpeg-based video rendering
 - Random built-in song selection
 - 10 random SFX hits per 25-second output
@@ -33,9 +33,9 @@ main.py         Launcher
 ## Requirements
 - Windows 10/11
 - Python 3.10+ (tested with 3.13)
-- FFmpeg installed and available on PATH
+- FFmpeg from `imageio-ffmpeg` or a system FFmpeg install on PATH
 
-### Install FFmpeg (Windows)
+### Optional: Install FFmpeg (Windows)
 1) Download from https://ffmpeg.org/download.html
 2) Extract and add the `bin` folder to PATH
 3) Verify:
@@ -55,7 +55,7 @@ python main.py
 
 ## How to Use
 1) Add exactly five gameplay videos. Each source must be 5 minutes to 1 hour long.
-2) Use Replace Selected or Remove Selected to manage the five video slots.
+2) Click a source block, then use Replace Slot or Remove Slot to manage it.
 3) Press Preview 5s for a short smoke test, or Start for a 25s short.
 4) Disable Auto create to render only the configured batch count.
 5) Enable Auto create to keep rendering until paused or cancelled.
@@ -80,7 +80,7 @@ Settings are saved in `config/settings.json`.
 - Output has no audio:
   - Check your audio file formats are supported and not corrupted.
 - FFmpeg errors:
-  - Confirm `ffmpeg -version` works in a terminal.
+  - Run `pip install -r requirements.txt`, or confirm `ffmpeg -version` works in a terminal.
 
 ## Build an Executable (Windows)
 Install build tools:
@@ -90,12 +90,7 @@ pip install -r requirements-dev.txt
 
 Build:
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed ^
-  --name "Mashup Creator" ^
-  --paths "src" ^
-  --icon "assets/icon.ico" ^
-  --add-data "assets;assets" ^
-  main.py
+pyinstaller --noconfirm --clean "Mashup Creator.spec"
 ```
 
 The executable will be at `dist/Mashup Creator.exe`.

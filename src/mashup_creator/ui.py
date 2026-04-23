@@ -14,7 +14,83 @@ from . import security
 from . import constants as c
 from .creator import CreationJob
 from .worker import RenderWorker
-from .utils import list_files, probe_duration, safe_copy_into_library, open_in_file_explorer
+from .utils import list_files, make_video_thumbnail, probe_duration, safe_copy_into_library, open_in_file_explorer
+
+
+class VideoSlotBlock(QtWidgets.QFrame):
+    clicked = QtCore.pyqtSignal(int)
+
+    def __init__(self, slot_index: int):
+        super().__init__()
+        self.slot_index = slot_index
+        self.path: Optional[Path] = None
+        self.setObjectName("videoSlot")
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setMinimumSize(132, 150)
+        self.setMaximumHeight(164)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self.title_label = QtWidgets.QLabel(f"Slot {slot_index + 1}")
+        self.title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setStyleSheet("color: #24163c; font-weight: 800;")
+        layout.addWidget(self.title_label)
+
+        self.thumbnail_label = QtWidgets.QLabel("Empty")
+        self.thumbnail_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.thumbnail_label.setFixedHeight(74)
+        self.thumbnail_label.setMinimumWidth(112)
+        self.thumbnail_label.setStyleSheet(
+            "background: #24163c; color: #ffffff; border-radius: 6px; font-weight: 800;"
+        )
+        layout.addWidget(self.thumbnail_label)
+
+        self.name_label = QtWidgets.QLabel("No video")
+        self.name_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.name_label.setFixedHeight(30)
+        self.name_label.setStyleSheet("color: #473064; font-size: 10px; font-weight: 700;")
+        layout.addWidget(self.name_label)
+
+        self.set_selected(False)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.slot_index)
+        super().mousePressEvent(event)
+
+    def set_video(self, path: Optional[Path], thumbnail_path: Optional[Path], selected: bool) -> None:
+        self.path = path
+        if path is None:
+            self.thumbnail_label.setPixmap(QtGui.QPixmap())
+            self.thumbnail_label.setText("Empty")
+            self.name_label.setText("No video")
+            self.setToolTip("")
+        else:
+            pixmap = QtGui.QPixmap(str(thumbnail_path)) if thumbnail_path else QtGui.QPixmap()
+            if pixmap.isNull():
+                self.thumbnail_label.setPixmap(QtGui.QPixmap())
+                self.thumbnail_label.setText("Preview unavailable")
+            else:
+                scaled = pixmap.scaled(
+                    self.thumbnail_label.size(),
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    QtCore.Qt.TransformationMode.SmoothTransformation,
+                )
+                self.thumbnail_label.setText("")
+                self.thumbnail_label.setPixmap(scaled)
+            metrics = QtGui.QFontMetrics(self.name_label.font())
+            self.name_label.setText(metrics.elidedText(path.name, QtCore.Qt.TextElideMode.ElideMiddle, 112))
+            self.setToolTip(str(path))
+        self.set_selected(selected)
+
+    def set_selected(self, selected: bool) -> None:
+        border = "#7b4dff" if selected else "#e0d5ff"
+        background = "#f7f1ff" if selected else "#ffffff"
+        self.setStyleSheet(
+            f"QFrame#videoSlot {{ background: {background}; border: 2px solid {border}; border-radius: 8px; }}"
+        )
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -49,8 +125,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start(250)
 
     def _apply_window_size(self):
-        self.resize(1200, 820)
-        self.setMinimumSize(1200, 820)
+        self.resize(1180, 780)
+        self.setMinimumSize(1100, 740)
         screen = QtGui.QGuiApplication.primaryScreen()
         if screen:
             rect = screen.availableGeometry()
@@ -69,29 +145,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_count = 1
         self.hw_encode = False
         self.auto_create = True
+        self.selected_video_slot = 0
 
     def _theme(self) -> str:
         return """
-        QMainWindow { background: #7b4dff; }
+        QMainWindow { background: #6d42e8; }
         QWidget { font-size: 13px; }
         QLabel { color: #ffffff; font-weight: 600; }
-        QGroupBox QLabel { color: #1d1733; font-weight: 600; }
-        QGroupBox QCheckBox, QGroupBox QRadioButton { color: #1d1733; font-weight: 600; }
-        QGroupBox { color: #1d1733; background: #ffffff; border: 2px solid #e0d5ff; border-radius: 14px; margin-top: 16px; }
-        QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 8px; font-size: 15px; font-weight: 800; }
-        QListWidget, QTextEdit { background: #ffffff; color: #1d1733; border: 2px solid #e0d5ff; border-radius: 12px; }
-        QProgressBar { border: 2px solid #e0d5ff; border-radius: 10px; text-align: center; background: #ffffff; min-height: 12px; max-height: 12px; }
-        QProgressBar::chunk { background-color: #2fbf71; border-radius: 10px; }
-        QPushButton { background: #ffffff; color: #1d1733; border: 2px solid #e0d5ff; border-radius: 18px; padding: 10px 16px; font-weight: 700; }
+        QFrame#header { background: #7b4dff; border: 1px solid #9b82ff; border-radius: 8px; }
+        QLabel#subtitle { color: #efe9ff; font-size: 12px; font-weight: 600; }
+        QGroupBox QLabel { color: #24163c; font-weight: 600; }
+        QGroupBox QCheckBox, QGroupBox QRadioButton { color: #24163c; font-weight: 600; }
+        QGroupBox { color: #24163c; background: #ffffff; border: 1px solid #e0d5ff; border-radius: 8px; margin-top: 14px; }
+        QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #ffffff; font-size: 14px; font-weight: 800; }
+        QTextEdit { background: #ffffff; color: #24163c; border: 1px solid #e0d5ff; border-radius: 8px; }
+        QProgressBar { border: 1px solid #e0d5ff; border-radius: 6px; text-align: center; background: #ffffff; min-height: 14px; max-height: 14px; }
+        QProgressBar::chunk { background-color: #2fbf71; border-radius: 6px; }
+        QPushButton { background: #ffffff; color: #24163c; border: 1px solid #e0d5ff; border-radius: 6px; padding: 8px 12px; font-weight: 700; }
         QPushButton:hover { background: #f3ebff; }
-        QPushButton#accent { background: #7b4dff; color: #ffffff; }
+        QPushButton:disabled { background: #f5f2fb; color: #9b90ac; }
+        QPushButton#accent { background: #7b4dff; color: #ffffff; border: 1px solid #7b4dff; }
         QPushButton#accent:hover { background: #5a35cc; }
-        QPushButton#accent_alt { background: #ff6fb1; color: #ffffff; }
+        QPushButton#accent_alt { background: #ff6fb1; color: #ffffff; border: 1px solid #ff6fb1; }
         QPushButton#accent_alt:hover { background: #e6589a; }
-        QSpinBox, QDoubleSpinBox { background: #ffffff; color: #1d1733; border: 2px solid #e0d5ff; border-radius: 10px; padding: 6px 8px; }
-        QMenuBar { background: #6d42e8; color: #ffffff; }
-        QMenuBar::item:selected { background: #5a35cc; }
-        QMenu { background: #ffffff; color: #1d1733; border: 1px solid #e0d5ff; }
+        QSpinBox, QDoubleSpinBox { background: #ffffff; color: #24163c; border: 1px solid #e0d5ff; border-radius: 6px; padding: 6px 8px; }
+        QMenuBar { background: #5a35cc; color: #ffffff; border-bottom: 1px solid #8b6cff; }
+        QMenuBar::item:selected { background: #7b4dff; }
+        QMenu { background: #ffffff; color: #24163c; border: 1px solid #e0d5ff; }
         QMenu::item:selected { background: #f3ebff; }
         QScrollBar:vertical { background: #f3ebff; width: 12px; margin: 2px; border-radius: 6px; }
         QScrollBar::handle:vertical { background: #7b4dff; min-height: 24px; border-radius: 6px; }
@@ -108,22 +188,23 @@ class MainWindow(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
 
         header = QtWidgets.QFrame()
-        header.setStyleSheet("background: #7b4dff; border-radius: 16px;")
-        header_layout = QtWidgets.QVBoxLayout(header)
-        header_layout.setContentsMargins(16, 16, 16, 16)
+        header.setObjectName("header")
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 10, 16, 10)
+        header_layout.setSpacing(14)
 
         title_label = QtWidgets.QLabel()
-        title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         if c.TITLE_IMAGE_PATH.exists():
             pix = QtGui.QPixmap(str(c.TITLE_IMAGE_PATH))
             if not pix.isNull():
                 scaled = pix.scaled(
-                    760,
-                    160,
+                    360,
+                    72,
                     QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                     QtCore.Qt.TransformationMode.SmoothTransformation,
                 )
@@ -132,12 +213,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 title_label.setText(c.APP_NAME)
         else:
             title_label.setText(c.APP_NAME)
-            title_label.setStyleSheet("font-size: 36px; font-weight: 800;")
+            title_label.setStyleSheet("font-size: 26px; font-weight: 800; color: #ffffff;")
         header_layout.addWidget(title_label)
 
         subtitle = QtWidgets.QLabel("Quick, punchy shorts with cinematic motion")
-        subtitle.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #efe9ff; font-size: 12px; font-weight: 600;")
+        subtitle.setObjectName("subtitle")
+        subtitle.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(subtitle)
 
         layout.addWidget(header)
@@ -156,92 +237,127 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_main_page(self):
         main_layout = QtWidgets.QVBoxLayout(self.main_page)
-        main_layout.setSpacing(14)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+
+        workspace = QtWidgets.QHBoxLayout()
+        workspace.setSpacing(12)
+        main_layout.addLayout(workspace, 1)
+
+        left_panel = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+        workspace.addWidget(left_panel, 1)
 
         media_box = QtWidgets.QGroupBox("Gameplay Sources")
         media_layout = QtWidgets.QVBoxLayout(media_box)
-        upload_row = QtWidgets.QHBoxLayout()
-        self.btn_upload_video = self._btn("Add Video(s)", self.upload_videos)
-        self.btn_replace_video = self._btn("Replace Selected", self.replace_selected_video)
-        self.btn_remove_video = self._btn("Remove Selected", self.remove_selected_video)
-        self.btn_open_video_folder = self._btn("Open Source Folder", lambda: open_in_file_explorer(c.VIDEO_DIR))
-        upload_row.addWidget(self.btn_upload_video)
-        upload_row.addWidget(self.btn_replace_video)
-        upload_row.addWidget(self.btn_remove_video)
-        upload_row.addWidget(self.btn_open_video_folder)
-        upload_row.addStretch()
-        media_layout.addLayout(upload_row)
+        media_layout.setContentsMargins(14, 18, 14, 14)
+        media_layout.setSpacing(12)
 
-        self.video_list = QtWidgets.QListWidget()
-        self.video_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.video_list.itemSelectionChanged.connect(self._update_video_buttons)
-        media_layout.addWidget(self.video_list)
-
+        media_header = QtWidgets.QHBoxLayout()
+        counts_row = QtWidgets.QHBoxLayout()
+        counts_row.setSpacing(8)
         self.video_count_lbl = QtWidgets.QLabel("Gameplay videos: 0/5")
         self.audio_count_lbl = QtWidgets.QLabel("Built-in songs: 0")
         self.sfx_count_lbl = QtWidgets.QLabel("Built-in SFX: 0")
-        counts_row = QtWidgets.QHBoxLayout()
-        counts_row.addWidget(self.video_count_lbl)
-        counts_row.addWidget(self.audio_count_lbl)
-        counts_row.addWidget(self.sfx_count_lbl)
+        for label in [self.video_count_lbl, self.audio_count_lbl, self.sfx_count_lbl]:
+            label.setStyleSheet(
+                "background: #f3ebff; border: 1px solid #e0d5ff; border-radius: 6px; "
+                "padding: 5px 8px; color: #473064; font-size: 12px; font-weight: 700;"
+            )
+            counts_row.addWidget(label)
         counts_row.addStretch()
-        media_layout.addLayout(counts_row)
-        main_layout.addWidget(media_box)
+        media_header.addLayout(counts_row, 1)
 
-        action_row = QtWidgets.QHBoxLayout()
+        source_buttons = QtWidgets.QHBoxLayout()
+        source_buttons.setSpacing(8)
+        self.btn_upload_video = self._btn("Add Video(s)", self.upload_videos)
+        self.btn_replace_video = self._btn("Replace Slot", self.replace_selected_video)
+        self.btn_remove_video = self._btn("Remove Slot", self.remove_selected_video)
+        self.btn_open_video_folder = self._btn("Folder", lambda: open_in_file_explorer(c.VIDEO_DIR))
+        for btn in [self.btn_upload_video, self.btn_replace_video, self.btn_remove_video, self.btn_open_video_folder]:
+            source_buttons.addWidget(btn)
+        media_header.addLayout(source_buttons)
+        media_layout.addLayout(media_header)
+
+        slots_grid = QtWidgets.QGridLayout()
+        slots_grid.setHorizontalSpacing(8)
+        slots_grid.setVerticalSpacing(8)
+        self.video_slots = []
+        for idx in range(c.MAX_SOURCE_VIDEOS):
+            slot = VideoSlotBlock(idx)
+            slot.clicked.connect(self._select_video_slot)
+            self.video_slots.append(slot)
+            slots_grid.addWidget(slot, 0, idx)
+        for col in range(c.MAX_SOURCE_VIDEOS):
+            slots_grid.setColumnStretch(col, 1)
+        media_layout.addLayout(slots_grid)
+        left_layout.addWidget(media_box)
+
+        logs_box = QtWidgets.QGroupBox("Activity")
+        logs_layout = QtWidgets.QVBoxLayout(logs_box)
+        logs_layout.setContentsMargins(14, 18, 14, 14)
+        self.log_text = QtWidgets.QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(160)
+        logs_layout.addWidget(self.log_text)
+        left_layout.addWidget(logs_box, 1)
+
+        right_panel = QtWidgets.QWidget()
+        right_panel.setFixedWidth(320)
+        right_layout = QtWidgets.QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
+        workspace.addWidget(right_panel)
+
         create_box = QtWidgets.QGroupBox("Create")
-        create_layout = QtWidgets.QHBoxLayout(create_box)
+        create_layout = QtWidgets.QVBoxLayout(create_box)
+        create_layout.setContentsMargins(14, 18, 14, 14)
+        create_layout.setSpacing(10)
         self.btn_start = self._btn("Start", self.start_creation, accent=True)
-        self.btn_preview = self._btn("Preview 5s", self.start_preview, accent_alt=True)
+        self.btn_start.setMinimumHeight(42)
+        self.btn_preview = self._btn("Preview 5s", self.start_preview)
+        self.btn_preview.setMinimumHeight(36)
+        create_layout.addWidget(self.btn_start)
+        create_layout.addWidget(self.btn_preview)
+        render_controls = QtWidgets.QHBoxLayout()
+        render_controls.setSpacing(8)
         self.btn_pause = self._btn("Pause", self.pause_creation)
         self.btn_resume = self._btn("Resume", self.resume_creation)
         self.btn_cancel = self._btn("Cancel", self.cancel_creation, accent_alt=True)
-        for b in [self.btn_start, self.btn_preview, self.btn_pause, self.btn_resume, self.btn_cancel]:
-            create_layout.addWidget(b)
-        action_row.addWidget(create_box, 2)
-
-        output_box = QtWidgets.QGroupBox("Output")
-        output_layout = QtWidgets.QHBoxLayout(output_box)
-        self.btn_open_creations = self._btn("Open Creations", lambda: open_in_file_explorer(c.OUTPUTS_DIR))
-        self.btn_open_latest = self._btn("Open Latest", self.open_latest)
-        self.btn_copy_report = self._btn("Copy Report", self.copy_report)
-        for b in [self.btn_open_creations, self.btn_open_latest, self.btn_copy_report]:
-            output_layout.addWidget(b)
-        action_row.addWidget(output_box, 2)
-
+        for btn in [self.btn_pause, self.btn_resume, self.btn_cancel]:
+            render_controls.addWidget(btn)
+        create_layout.addLayout(render_controls)
         self.btn_advanced = self._btn("Advanced Settings", lambda: self.stack.setCurrentWidget(self.advanced_page))
-        action_row.addWidget(self.btn_advanced, 1)
-        main_layout.addLayout(action_row)
+        create_layout.addWidget(self.btn_advanced)
+        right_layout.addWidget(create_box)
 
         status_box = QtWidgets.QGroupBox("Status")
         status_layout = QtWidgets.QVBoxLayout(status_box)
-        status_row = QtWidgets.QHBoxLayout()
+        status_layout.setContentsMargins(14, 18, 14, 14)
+        status_layout.setSpacing(10)
         self.status_label = QtWidgets.QLabel("Ready.")
+        self.status_label.setWordWrap(True)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 100)
-        status_row.addWidget(self.status_label)
-        status_row.addStretch()
-        status_row.addWidget(self.progress, 2)
-        status_layout.addLayout(status_row)
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.progress)
         self.timer_label = QtWidgets.QLabel("Time: --:--")
         status_layout.addWidget(self.timer_label)
-        main_layout.addWidget(status_box)
+        right_layout.addWidget(status_box)
 
-        logs_box = QtWidgets.QGroupBox("Details")
-        logs_layout = QtWidgets.QVBoxLayout(logs_box)
-        self.log_text = QtWidgets.QTextEdit()
-        self.log_text.setReadOnly(True)
-        logs_layout.addWidget(self.log_text)
-        main_layout.addWidget(logs_box, 1)
-
-        note = QtWidgets.QLabel(
-            "Output: 25s (preview 5s). Add exactly five gameplay videos, 5 minutes to 1 hour each. "
-            "Songs and SFX are randomly selected from the built-in library."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #efe9ff; font-size: 10px;")
-        main_layout.addWidget(note)
+        output_box = QtWidgets.QGroupBox("Output")
+        output_layout = QtWidgets.QVBoxLayout(output_box)
+        output_layout.setContentsMargins(14, 18, 14, 14)
+        output_layout.setSpacing(8)
+        self.btn_open_creations = self._btn("Open Creations", lambda: open_in_file_explorer(c.OUTPUTS_DIR))
+        self.btn_open_latest = self._btn("Open Latest", self.open_latest)
+        self.btn_copy_report = self._btn("Copy Report", self.copy_report)
+        for btn in [self.btn_open_creations, self.btn_open_latest, self.btn_copy_report]:
+            output_layout.addWidget(btn)
+        right_layout.addWidget(output_box)
+        right_layout.addStretch()
 
         self._set_button_state(self.btn_pause, False)
         self._set_button_state(self.btn_resume, False)
@@ -367,7 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "How to Use",
             "1) Add exactly five gameplay videos.\n"
-            "2) Use Replace Selected or Remove Selected to manage the five slots.\n"
+            "2) Click a source block, then use Replace Slot or Remove Slot to manage it.\n"
             "3) Click Start to create a 25s short, or Preview 5s.\n"
             "4) Songs and SFX are randomly selected from the built-in folders.\n"
             "5) Outputs save to the creations folder.\n"
@@ -465,38 +581,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_counts()
 
     def _update_counts(self):
-        videos = list_files(c.VIDEO_DIR, c.VIDEO_EXTS)
+        videos = self._trim_video_library(list_files(c.VIDEO_DIR, c.VIDEO_EXTS))
         auds = len(list_files(c.AUDIO_DIR, c.AUDIO_EXTS))
         sfxs = len(list_files(c.SFX_DIR, c.AUDIO_EXTS))
 
-        selected = self._selected_video_path()
-        self.video_list.clear()
-        for idx, path in enumerate(videos, start=1):
-            item = QtWidgets.QListWidgetItem(f"{idx}. {path.name}")
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
-            item.setToolTip(str(path))
-            self.video_list.addItem(item)
-            if selected and selected == path:
-                self.video_list.setCurrentItem(item)
+        if self.selected_video_slot >= c.MAX_SOURCE_VIDEOS:
+            self.selected_video_slot = 0
+
+        for idx, slot in enumerate(self.video_slots):
+            path = videos[idx] if idx < len(videos) else None
+            thumbnail = None
+            if path is not None:
+                try:
+                    thumbnail = make_video_thumbnail(path, c.THUMB_DIR)
+                except Exception:
+                    thumbnail = None
+            slot.set_video(path, thumbnail, idx == self.selected_video_slot)
 
         self.video_count_lbl.setText(f"Gameplay videos: {len(videos)}/{c.MAX_SOURCE_VIDEOS}")
         self.audio_count_lbl.setText(f"Built-in songs: {auds}")
         self.sfx_count_lbl.setText(f"Built-in SFX: {sfxs}")
         self._update_video_buttons()
 
+    def _trim_video_library(self, videos: List[Path]) -> List[Path]:
+        if len(videos) <= c.MAX_SOURCE_VIDEOS:
+            return videos
+
+        keep = videos[: c.MAX_SOURCE_VIDEOS]
+        extras = videos[c.MAX_SOURCE_VIDEOS :]
+        base = c.VIDEO_DIR.resolve()
+        removed = 0
+        for path in extras:
+            try:
+                resolved = path.resolve()
+                if not resolved.is_relative_to(base):
+                    continue
+                path.unlink()
+                removed += 1
+            except Exception as exc:
+                self._log_error(f"Could not remove extra video {path.name}: {exc}")
+        if removed:
+            self._log(f"Removed {removed} extra video file(s); only five source videos are stored.")
+        return keep
+
+    def _select_video_slot(self, slot_index: int):
+        self.selected_video_slot = slot_index
+        self._update_counts()
+
     def _selected_video_path(self) -> Optional[Path]:
-        if not hasattr(self, "video_list"):
+        if not hasattr(self, "video_slots"):
             return None
-        item = self.video_list.currentItem()
-        if not item:
+        if self.selected_video_slot < 0 or self.selected_video_slot >= c.MAX_SOURCE_VIDEOS:
             return None
-        value = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        return Path(value) if value else None
+        videos = list_files(c.VIDEO_DIR, c.VIDEO_EXTS)
+        if self.selected_video_slot >= len(videos):
+            return None
+        return videos[self.selected_video_slot]
 
     def _update_video_buttons(self):
         if not hasattr(self, "btn_upload_video"):
             return
-        videos = list_files(c.VIDEO_DIR, c.VIDEO_EXTS)
+        videos = self._trim_video_library(list_files(c.VIDEO_DIR, c.VIDEO_EXTS))
         songs = list_files(c.AUDIO_DIR, c.AUDIO_EXTS)
         sfxs = list_files(c.SFX_DIR, c.AUDIO_EXTS)
         has_selection = self._selected_video_path() is not None
@@ -527,7 +672,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return f"{mins:02d}:{secs:02d}"
 
     def upload_videos(self):
-        existing = list_files(c.VIDEO_DIR, c.VIDEO_EXTS)
+        existing = self._trim_video_library(list_files(c.VIDEO_DIR, c.VIDEO_EXTS))
         remaining = c.MAX_SOURCE_VIDEOS - len(existing)
         if remaining <= 0:
             QtWidgets.QMessageBox.information(
@@ -558,6 +703,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log(f"Added {copied} gameplay video(s).")
         if skipped:
             self._log_error(f"Skipped {skipped} video file(s).")
+        if copied:
+            self.selected_video_slot = min(len(existing) + copied - 1, c.MAX_SOURCE_VIDEOS - 1)
+            self._refresh_lists()
 
     def replace_selected_video(self):
         selected = self._selected_video_path()
@@ -581,7 +729,14 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             selected.unlink()
         except Exception as exc:
+            try:
+                new_path.unlink()
+            except Exception:
+                pass
             self._log_error(f"Could not remove old video: {exc}")
+            QtWidgets.QMessageBox.critical(self, "Replace Failed", f"Could not remove old video: {exc}")
+            self._refresh_lists()
+            return
         self._refresh_lists()
         self._log(f"Replaced {selected.name} with {new_path.name}.")
 
@@ -609,9 +764,9 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             duration = probe_duration(src)
         except Exception as exc:
-            return False, f"Could not read duration with ffprobe: {exc}"
+            return False, f"Could not read video duration: {exc}"
         if duration is None:
-            return False, "Could not read duration with ffprobe."
+            return False, "Could not read video duration."
         if duration < c.MIN_SOURCE_SECONDS:
             return False, "Gameplay videos must be at least 5 minutes long."
         if duration > c.MAX_SOURCE_SECONDS:
@@ -619,7 +774,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return True, "OK"
 
     def _collect_selections(self) -> Tuple[List[Path], List[Path], List[Path]]:
-        all_vids = list_files(c.VIDEO_DIR, c.VIDEO_EXTS)
+        all_vids = self._trim_video_library(list_files(c.VIDEO_DIR, c.VIDEO_EXTS))
         all_auds = list_files(c.AUDIO_DIR, c.AUDIO_EXTS)
         all_sfxs = list_files(c.SFX_DIR, c.AUDIO_EXTS)
         return all_vids, all_auds, all_sfxs

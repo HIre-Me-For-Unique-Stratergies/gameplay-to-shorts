@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = [('assets', 'assets')]
 datas += copy_metadata('imageio')
 datas += copy_metadata('imageio_ffmpeg')
+datas += collect_data_files('imageio_ffmpeg', includes=['binaries/*'])
 
 
 a = Analysis(
@@ -11,7 +12,7 @@ a = Analysis(
     pathex=['src'],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=['imageio_ffmpeg'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
