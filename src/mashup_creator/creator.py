@@ -1,5 +1,6 @@
 import os
 import random
+import signal
 import subprocess
 import threading
 import time
@@ -34,6 +35,8 @@ class Creator:
         self._pause_event.set()
         self._cancel_event = threading.Event()
         self._process: Optional[subprocess.Popen] = None
+        self._process_lock = threading.Lock()
+        self._current_output: Optional[Path] = None
 
     def pause(self):
         self._pause_event.clear()
@@ -46,12 +49,9 @@ class Creator:
     def cancel(self):
         self._cancel_event.set()
         self._pause_event.set()
-        if self._process and self._process.poll() is None:
-            try:
-                self._process.terminate()
-            except Exception:
-                pass
-        self.status_cb("Cancel requested (will stop as soon as possible).")
+        self._stop_process(force=True)
+        self._remove_current_output()
+        self.status_cb("Cancelling current render and deleting partial output...")
 
     def _checkpoint(self):
         while not self._pause_event.is_set():
@@ -63,6 +63,7 @@ class Creator:
 
     def create(self, job: CreationJob) -> None:
         self.progress_cb(0)
+        self._current_output = job.out_file
         self.status_cb("Checking FFmpeg...")
         self._checkpoint()
 
@@ -122,9 +123,11 @@ class Creator:
             self.progress_cb(100)
             self.status_cb(f"Done: {job.out_file}")
         finally:
-            self._process = None
             if self._cancel_event.is_set():
-                self._remove_output(job.out_file)
+                self._remove_current_output()
+            with self._process_lock:
+                self._process = None
+            self._current_output = None
             for tmp in c.EDIT_BANK_DIR.glob("*"):
                 try:
                     if tmp.is_file():
@@ -146,8 +149,6 @@ class Creator:
                 raise ValueError(f"Could not read video duration: {path.name}")
             if duration < c.MIN_SOURCE_SECONDS:
                 raise ValueError(f"{path.name} is shorter than 5 minutes.")
-            if duration > c.MAX_SOURCE_SECONDS:
-                raise ValueError(f"{path.name} is longer than 1 hour.")
             valid_paths.append(path)
         random.shuffle(valid_paths)
         return valid_paths
@@ -164,14 +165,8 @@ class Creator:
         if count == 1:
             return [clip_len]
 
-        base = clip_len / count
-        jitter = min(base * 0.35, 1.75)
-        floor = min(base * 0.65, 3.0)
-        lengths = [max(floor, base + random.uniform(-jitter, jitter)) for _ in range(count)]
-        scale = clip_len / sum(lengths)
-        lengths = [max(0.35, length * scale) for length in lengths]
-        lengths[-1] = max(0.35, clip_len - sum(lengths[:-1]))
-        return lengths
+        segment_len = clip_len / count
+        return [segment_len for _ in range(count)]
 
     def _pick_sfx_hits(self, sfx_paths: List[Path], clip_len: float):
         hit_count = max(2, int(clip_len * 0.4))
@@ -205,8 +200,9 @@ class Creator:
             filter_parts.append(
                 f"[{idx}:v]"
                 f"trim=0:{duration:.3f},setpts=PTS-STARTPTS,"
-                f"scale={job.target_w}:{job.target_h}:force_original_aspect_ratio=increase,"
-                f"crop={job.target_w}:{job.target_h},setsar=1,fps=30,format=yuv420p"
+                f"scale={job.target_w}:{job.target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={job.target_w}:{job.target_h}:(ow-iw)/2:(oh-ih)/2:black,"
+                f"setsar=1,fps=30,format=yuv420p"
                 f"[v{idx}]"
             )
 
@@ -216,12 +212,7 @@ class Creator:
         else:
             filter_parts.append(f"{video_labels}concat=n={len(video_segments)}:v=1:a=0[vcat]")
 
-        fade_duration = min(0.25, job.clip_len / 4)
-        fade_start = max(0.0, job.clip_len - fade_duration)
-        filter_parts.append(
-            f"[vcat]fade=t=in:st=0:d={fade_duration:.3f},"
-            f"fade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[vout]"
-        )
+        filter_parts.append("[vcat]null[vout]")
 
         audio_idx = len(video_segments)
         filter_parts.append(
@@ -282,18 +273,27 @@ class Creator:
         return cmd
 
     def _run_ffmpeg(self, cmd: List[str], clip_len: float) -> None:
-        self._process = subprocess.Popen(
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
+            **kwargs,
         )
+        with self._process_lock:
+            self._process = process
         tail = []
-        assert self._process.stdout is not None
+        assert process.stdout is not None
         while True:
-            line = self._process.stdout.readline()
+            line = process.stdout.readline()
             if line:
                 text = line.strip()
                 if text:
@@ -302,20 +302,14 @@ class Creator:
                     self._update_render_progress(text, clip_len)
 
             if self._cancel_event.is_set():
-                try:
-                    self._process.terminate()
-                    self._process.wait(timeout=5)
-                except Exception:
-                    try:
-                        self._process.kill()
-                    except Exception:
-                        pass
+                self._stop_process(force=True)
+                self._remove_current_output()
                 raise RuntimeError("Cancelled.")
 
-            if line == "" and self._process.poll() is not None:
+            if line == "" and process.poll() is not None:
                 break
 
-        return_code = self._process.wait()
+        return_code = process.wait()
         if return_code != 0:
             detail = "\n".join(tail[-8:]) or f"ffmpeg exited with code {return_code}."
             raise RuntimeError(detail)
@@ -346,8 +340,43 @@ class Creator:
             return None
 
     def _remove_output(self, path: Path) -> None:
-        if path.exists():
+        for _ in range(8):
+            if not path.exists():
+                return
             try:
                 path.unlink()
+                return
+            except Exception:
+                time.sleep(0.15)
+
+    def _remove_current_output(self) -> None:
+        if self._current_output is not None:
+            self._remove_output(self._current_output)
+
+    def _stop_process(self, force: bool = False) -> None:
+        with self._process_lock:
+            process = self._process
+        if process is None or process.poll() is not None:
+            return
+
+        try:
+            if os.name == "nt":
+                if force:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=3,
+                    )
+                else:
+                    process.terminate()
+            else:
+                if force:
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
+        except Exception:
+            try:
+                process.kill()
             except Exception:
                 pass

@@ -66,11 +66,11 @@ class RenderWorker(QtCore.QObject):
                 self.status.emit("Auto create stopped (paused or cancelled).")
             elif len(self.jobs) > 1 and not self.creator._cancel_event.is_set():
                 self.status.emit("Batch complete.")
-            self.done.emit(last_output)
+            self.done.emit("" if self.creator._cancel_event.is_set() else last_output)
         except Exception as e:
             if str(e) == "Cancelled.":
                 self.status.emit("Cancelled.")
-                self.done.emit(last_output)
+                self.done.emit("")
             else:
                 self.error.emit(str(e))
 

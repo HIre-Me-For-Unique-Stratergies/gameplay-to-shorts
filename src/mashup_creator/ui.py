@@ -139,8 +139,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowIcon(QtGui.QIcon(str(c.ICON_PATH)))
 
     def _init_state(self):
-        self.render_speed = "veryfast"
-        self.downscale = False
+        self.render_speed = "ultrafast"
+        self.downscale = True
         self.sfx_volume = 1.35
         self.batch_count = 1
         self.hw_encode = False
@@ -153,6 +153,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QWidget { font-size: 13px; }
         QLabel { color: #ffffff; font-weight: 600; }
         QFrame#header { background: #7b4dff; border: 1px solid #9b82ff; border-radius: 8px; }
+        QFrame#modeBox { background: #f7f1ff; border: 1px solid #e0d5ff; border-radius: 8px; }
         QLabel#subtitle { color: #efe9ff; font-size: 12px; font-weight: 600; }
         QGroupBox QLabel { color: #24163c; font-weight: 600; }
         QGroupBox QCheckBox, QGroupBox QRadioButton { color: #24163c; font-weight: 600; }
@@ -216,7 +217,7 @@ class MainWindow(QtWidgets.QMainWindow):
             title_label.setStyleSheet("font-size: 26px; font-weight: 800; color: #ffffff;")
         header_layout.addWidget(title_label)
 
-        subtitle = QtWidgets.QLabel("Quick, punchy shorts with cinematic motion")
+        subtitle = QtWidgets.QLabel("Quick random cuts with songs and SFX")
         subtitle.setObjectName("subtitle")
         subtitle.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(subtitle)
@@ -321,6 +322,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_preview.setMinimumHeight(36)
         create_layout.addWidget(self.btn_start)
         create_layout.addWidget(self.btn_preview)
+
+        mode_box = QtWidgets.QFrame()
+        mode_box.setObjectName("modeBox")
+        mode_layout = QtWidgets.QVBoxLayout(mode_box)
+        mode_layout.setContentsMargins(10, 10, 10, 10)
+        mode_layout.setSpacing(8)
+        mode_title = QtWidgets.QLabel("Creation Mode")
+        mode_title.setStyleSheet("color: #24163c; font-size: 12px; font-weight: 800;")
+        mode_layout.addWidget(mode_title)
+        self.chk_auto = QtWidgets.QCheckBox("Keep creating until I press Cancel")
+        self.chk_auto.setToolTip("When enabled, Start keeps making videos with no fixed limit.")
+        self.chk_auto.stateChanged.connect(self._update_creation_mode_ui)
+        mode_layout.addWidget(self.chk_auto)
+        batch_row = QtWidgets.QHBoxLayout()
+        batch_row.setSpacing(8)
+        self.batch_label = QtWidgets.QLabel("Videos to create")
+        self.batch_label.setStyleSheet("color: #24163c; font-weight: 700;")
+        self.spin_batch = QtWidgets.QSpinBox()
+        self.spin_batch.setRange(1, 5)
+        self.spin_batch.setToolTip("Used when unlimited auto-create is off.")
+        self.spin_batch.valueChanged.connect(self._update_creation_mode_ui)
+        batch_row.addWidget(self.batch_label, 1)
+        batch_row.addWidget(self.spin_batch)
+        mode_layout.addLayout(batch_row)
+        self.mode_summary = QtWidgets.QLabel("")
+        self.mode_summary.setWordWrap(True)
+        self.mode_summary.setStyleSheet("color: #5f4a78; font-size: 11px; font-weight: 700;")
+        mode_layout.addWidget(self.mode_summary)
+        create_layout.addWidget(mode_box)
+
         render_controls = QtWidgets.QHBoxLayout()
         render_controls.setSpacing(8)
         self.btn_pause = self._btn("Pause", self.pause_creation)
@@ -402,19 +433,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spin_sfx.setSingleStep(0.1)
         a_layout.addRow("SFX volume", self.spin_sfx)
         grid.addWidget(audio, 0, 1)
-
-        batch = QtWidgets.QGroupBox("Batch / Auto")
-        b_layout = QtWidgets.QFormLayout(batch)
-        b_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        b_layout.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        b_layout.setHorizontalSpacing(12)
-        b_layout.setVerticalSpacing(8)
-        self.spin_batch = QtWidgets.QSpinBox()
-        self.spin_batch.setRange(1, 5)
-        b_layout.addRow("Videos to create", self.spin_batch)
-        self.chk_auto = QtWidgets.QCheckBox("Auto create until paused or cancelled")
-        b_layout.addRow(self.chk_auto)
-        grid.addWidget(batch, 1, 0)
 
         adv_layout.addLayout(grid)
         adv_layout.addStretch()
@@ -518,8 +536,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             self._apply_settings_to_ui()
             return
-        self.render_speed = data.get("render_speed", "veryfast")
-        self.downscale = bool(data.get("downscale", False))
+        self.render_speed = data.get("render_speed", "ultrafast")
+        self.downscale = bool(data.get("downscale", True))
         self.sfx_volume = float(data.get("sfx_volume", 1.35))
         self.batch_count = int(data.get("batch_count", 1))
         self.hw_encode = bool(data.get("hw_encode", False))
@@ -551,6 +569,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spin_sfx.setValue(self.sfx_volume)
         self.spin_batch.setValue(self.batch_count)
         self.chk_auto.setChecked(self.auto_create)
+        self._update_creation_mode_ui()
+
+    def _update_creation_mode_ui(self):
+        if not hasattr(self, "chk_auto"):
+            return
+        unlimited = self.chk_auto.isChecked()
+        if hasattr(self, "spin_batch"):
+            self.spin_batch.setEnabled(not unlimited)
+        if hasattr(self, "batch_label"):
+            self.batch_label.setEnabled(not unlimited)
+        if hasattr(self, "mode_summary"):
+            if unlimited:
+                self.mode_summary.setText("Start will keep creating videos until Cancel or Pause is pressed.")
+            else:
+                count = self.spin_batch.value() if hasattr(self, "spin_batch") else self.batch_count
+                self.mode_summary.setText(f"Start will create {count} video(s), then stop.")
 
     def _log(self, text: str):
         at_bottom = self.log_text.verticalScrollBar().value() >= self.log_text.verticalScrollBar().maximum()
@@ -769,8 +803,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return False, "Could not read video duration."
         if duration < c.MIN_SOURCE_SECONDS:
             return False, "Gameplay videos must be at least 5 minutes long."
-        if duration > c.MAX_SOURCE_SECONDS:
-            return False, "Gameplay videos must be no longer than 1 hour."
         return True, "OK"
 
     def _collect_selections(self) -> Tuple[List[Path], List[Path], List[Path]]:
@@ -817,7 +849,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         target_w = 720 if self.downscale else 1080
         target_h = 1280 if self.downscale else 1920
-        bitrate = "3000k" if self.downscale else "5000k"
+        bitrate = "2000k" if self.downscale else "3500k"
         clip_len = 5.0 if preview else 25.0
         job_count = 1 if preview or self.auto_create else min(5, self.batch_count)
 
@@ -917,8 +949,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_button_state(self.btn_resume, False)
 
     def cancel_creation(self):
+        self.batch_stop_flag.set()
+        self.latest_output_file = None
         if self.worker:
             self.worker.cancel()
+        self.status_label.setText("Cancelling current render and deleting partial output...")
+        self._set_button_state(self.btn_pause, False)
+        self._set_button_state(self.btn_resume, False)
         self._set_button_state(self.btn_cancel, False)
 
     def _on_status(self, text: str):

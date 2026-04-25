@@ -1,15 +1,15 @@
 # Mashup Creator
 
 Mashup Creator is a Windows desktop app that builds punchy 25-second YouTube Shorts
-from exactly five gameplay source videos. It randomly cuts one short scene from each
+from exactly five gameplay source videos. It randomly cuts a 5-second scene from each
 source, picks a built-in song, and places random built-in SFX hits across the
-timeline. Output is vertical (1080x1920 by default).
+timeline. Output is vertical (720x1280 by default for faster rendering).
 
 ## Features
 - Five thumbnail source blocks with add, replace, and remove controls
 - Fast FFmpeg-based video rendering
 - Random built-in song selection
-- 10 random SFX hits per 25-second output
+- Random SFX hits per 25-second output
 - Auto-create loop (continuous generation)
 - Progress/status reporting in-app
 - Safe file validation before copying into the library
@@ -54,7 +54,7 @@ python main.py
 ```
 
 ## How to Use
-1) Add exactly five gameplay videos. Each source must be 5 minutes to 1 hour long.
+1) Add exactly five gameplay videos. Each source must be at least 5 minutes long.
 2) Click a source block, then use Replace Slot or Remove Slot to manage it.
 3) Press Preview 5s for a short smoke test, or Start for a 25s short.
 4) Disable Auto create to render only the configured batch count.
@@ -68,7 +68,7 @@ upload or change those components.
 ## Settings
 Advanced Settings include:
 - Render preset (Very fast / Ultra fast)
-- Output resolution (1080x1920 or 720x1280)
+- Output resolution (720x1280 by default, or 1080x1920)
 - SFX volume
 - Batch size and auto-create behavior
 
@@ -97,4 +97,4 @@ The executable will be at `dist/Mashup Creator.exe`.
 
 ## Notes
 - If you bundle FFmpeg, ensure your license obligations are met.
-- For best quality, keep 1080x1920 enabled.
+- For best speed, keep 720x1280 and Ultra fast enabled.

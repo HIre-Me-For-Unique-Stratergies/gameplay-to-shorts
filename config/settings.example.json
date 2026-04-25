@@ -1,6 +1,6 @@
 {
-  "render_speed": "veryfast",
-  "downscale": false,
+  "render_speed": "ultrafast",
+  "downscale": true,
   "sfx_volume": 1.35,
   "batch_count": 1,
   "hw_encode": false,
